@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Implement `Zeroize` for `EncodedUint` ([#1342])
 
+### Fixed
+- `u32` overflow of the safegcd iteration count at precisions of 93558 bits and above, which made
+  `invert_mod`/`invert_odd_mod` spuriously report no inverse and `gcd` return wrong results ([#TBD])
+
 [#1342]: https://github.com/RustCrypto/crypto-bigint/pull/1342
+[#TBD]: https://github.com/RustCrypto/crypto-bigint/pull/TBD
 
 ## 0.7.5 (2026-06-22)
 ### Added
