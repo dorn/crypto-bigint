@@ -3,7 +3,7 @@
 //!
 //! See parent module for more information.
 
-use super::{Matrix, iterations, jump, next_batch};
+use super::{GCD_BATCH_SIZE, Matrix, iterations, jump};
 use crate::{
     BoxedUint, Choice, ConcatenatingMul, CtAssign, CtOption, CtSelect, I64, Int, Limb, NonZero,
     Odd, Resize, U64, Uint,
@@ -112,11 +112,11 @@ fn invert_odd_mod_precomp<const VARTIME: bool>(
         if VARTIME && g.is_zero_vartime() {
             break;
         }
-        let (batch, remaining) = next_batch(steps);
+        let batch = u32_min(steps, GCD_BATCH_SIZE);
         (delta, t) = jump::<VARTIME>(f.lowest(), g.lowest(), delta, batch);
         (f, g) = update_fg(&f, &g, t, batch);
         (d, e) = update_de(&d, &e, &m, mi, t, batch);
-        steps = remaining;
+        steps -= batch;
     }
 
     let d = d
@@ -188,10 +188,10 @@ pub fn gcd_odd<const VARTIME: bool>(f: &Odd<BoxedUint>, g: &BoxedUint) -> Odd<Bo
         if VARTIME && g.is_zero_vartime() {
             break;
         }
-        let (batch, remaining) = next_batch(steps);
+        let batch = u32_min(steps, GCD_BATCH_SIZE);
         (delta, t) = jump::<VARTIME>(f.lowest(), g.lowest(), delta, batch);
         (f, g) = update_fg(&f, &g, t, batch);
-        steps = remaining;
+        steps -= batch;
     }
 
     f.magnitude()

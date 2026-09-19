@@ -12,7 +12,7 @@
 #[cfg(feature = "alloc")]
 pub(crate) mod boxed;
 
-use crate::{Choice, CtOption, I64, Int, Limb, Odd, U64, Uint, bitlen};
+use crate::{Choice, CtOption, I64, Int, Limb, Odd, U64, Uint, bitlen, primitives::u32_min};
 use core::fmt;
 
 const GCD_BATCH_SIZE: u32 = 62;
@@ -122,11 +122,11 @@ const fn invert_odd_mod_precomp<const LIMBS: usize, const VARTIME: bool>(
         if VARTIME && g.is_zero_vartime() {
             break;
         }
-        let (batch, remaining) = next_batch(steps);
+        let batch = u32_min(steps, GCD_BATCH_SIZE);
         (delta, t) = jump::<VARTIME>(f.lowest(), g.lowest(), delta, batch);
         (f, g) = update_fg(&f, &g, t, batch);
         (d, e) = update_de(&d, &e, m.as_ref(), mi, t, batch);
-        steps = remaining;
+        steps -= batch;
     }
 
     let d = d.norm(f.is_negative(), m.as_ref());
@@ -147,10 +147,10 @@ pub const fn gcd_odd<const LIMBS: usize, const VARTIME: bool>(
         if VARTIME && g.is_zero_vartime() {
             break;
         }
-        let (batch, remaining) = next_batch(steps);
+        let batch = u32_min(steps, GCD_BATCH_SIZE);
         (delta, t) = jump::<VARTIME>(f.lowest(), g.lowest(), delta, batch);
         (f, g) = update_fg(&f, &g, t, batch);
-        steps = remaining;
+        steps -= batch;
     }
 
     f.magnitude().to_odd().expect_copied("odd by construction")
@@ -344,31 +344,22 @@ const fn shr_in_place_wide<const L: usize, const H: usize>(
 /// Calculate the maximum number of iterations required according to
 /// safegcd-bounds: <https://github.com/sipa/safegcd-bounds>
 ///
-/// Computed in `u64`: `45907 * bits + 30179` exceeds `u32::MAX` once `bits >= 93558`, and the
-/// result itself (about `2.3 * bits`) exceeds `u32::MAX` for `bits` above about `1.86e9`.
+/// Computed in `u64` because `45907 * bits + 30179` exceeds `u32::MAX` once `bits >= 93558`.
+/// The count itself (about `2.3 * bits`) only exceeds `u32::MAX` for `bits` above `1864517463`,
+/// which panics rather than wrapping.
 // NOTE: the division is non-constant-time, but this is used to compute the number of iterations we
 // perform which is leaked in timing information
 #[inline]
 #[allow(clippy::integer_division_remainder_used, reason = "public parameter")]
 #[allow(clippy::cast_lossless, reason = "`const fn`")]
-const fn iterations(bits: u32) -> u64 {
-    (45907 * bits as u64 + 30179) / 19929
-}
-
-/// Split `steps` into the next batch of at most `GCD_BATCH_SIZE` reduction steps and the steps
-/// remaining after it.
-#[inline]
-#[allow(clippy::cast_lossless, reason = "`const fn`")]
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "`steps < GCD_BATCH_SIZE` where narrowed"
-)]
-const fn next_batch(steps: u64) -> (u32, u64) {
-    if steps < GCD_BATCH_SIZE as u64 {
-        (steps as u32, 0)
-    } else {
-        (GCD_BATCH_SIZE, steps - GCD_BATCH_SIZE as u64)
-    }
+#[allow(clippy::cast_possible_truncation, reason = "checked by the assertion")]
+const fn iterations(bits: u32) -> u32 {
+    let iterations = (45907 * bits as u64 + 30179) / 19929;
+    assert!(
+        iterations <= u32::MAX as u64,
+        "precision too large for safegcd"
+    );
+    iterations as u32
 }
 
 /// A `Uint` which carries a separate sign in order to maintain the same range.
@@ -550,7 +541,7 @@ impl<const LIMBS: usize> PartialEq for SignedInt<LIMBS> {
 
 #[cfg(test)]
 mod tests {
-    use super::{GCD_BATCH_SIZE, SafeGcdInverter, iterations, next_batch};
+    use super::{SafeGcdInverter, iterations};
     use crate::{U128, U256, modular::safegcd::shr_in_place_wide};
 
     #[test]
@@ -598,16 +589,13 @@ mod tests {
         assert_eq!(iterations(93_558), 215_514);
         assert_eq!(iterations(93_568), 215_537);
         assert_eq!(iterations(98_304), 226_447);
-        // The result itself exceeds `u32::MAX` for the largest precisions.
-        assert_eq!(iterations(u32::MAX), 9_893_575_374);
+        // The largest precision whose count still fits in `u32`.
+        assert_eq!(iterations(1_864_517_463), 4_294_967_294);
     }
 
     #[test]
-    fn next_batch_is_bounded() {
-        assert_eq!(next_batch(0), (0, 0));
-        assert_eq!(next_batch(61), (61, 0));
-        assert_eq!(next_batch(62), (GCD_BATCH_SIZE, 0));
-        assert_eq!(next_batch(63), (GCD_BATCH_SIZE, 1));
-        assert_eq!(next_batch(u64::MAX), (GCD_BATCH_SIZE, u64::MAX - 62));
+    #[should_panic(expected = "precision too large for safegcd")]
+    fn iterations_panics_beyond_u32() {
+        iterations(1_864_517_464);
     }
 }
